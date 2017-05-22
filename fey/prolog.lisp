@@ -17,7 +17,7 @@
 (defparameter *predicates-db* nil)
 
 (defmacro <- (&rest clause)
-  `(add-clause ',clause))
+  `(add-clause ',(replace-?-vars clause)))
 
 (defun add-clause (clause)
   (let ((pred (predicate (clause-head clause))))
@@ -35,23 +35,23 @@
   (setf (get predicate 'clauses)
         nil))
 
-(defun prove (goal bindings)
-  (mapcan #'(lambda (clause)
-              (let ((new-clause (rename-variables clause)))
-                (prove-all (clause-body new-clause)
-                           (unify goal
-                                  (clause-head new-clause)
-                                  bindings))))
-          (get-clauses (predicate goal))))
+(defun prove (goal bindings other-goals)
+  (let ((clauses (get-clauses (predicate goal))))
+    (if (listp clauses)
+        (some
+         #'(lambda (clause)
+             (let ((new-clause (rename-variables clause)))
+               (prove-all
+                (append (clause-body new-clause) other-goals)
+                (unify goal (clause-head new-clause) bindings))))
+         clauses)
+        (funcall clauses (rest goal) bindings
+                 other-goals))))
 
 (defun prove-all (goals bindings)
   (cond ((eq bindings fail) fail)
-        ((null goals) (list bindings))
-        (t (mapcan #'(lambda (goal1-solution)
-                       (prove-all (rest goals)
-                                  goal1-solution))
-                   (prove (first goals)
-                          bindings)))))
+        ((null goals) bindings)
+        (t (prove (first goals) bindings (rest goals)))))
 
 (defun rename-variables (x)
   (sublis (mapcar #'(lambda (var)
@@ -73,13 +73,21 @@
        (unique-find-anywhere-if predicate (rest tree)
                                 found-so-far))))
 
+(defun replace-?-vars (exp)
+  (cond ((eq exp '?) (gensym "?"))
+        ((atom exp) exp)
+        (t (reuse-cons (replace-?-vars (first exp))
+                       (replace-?-vars (rest exp))
+                       exp))))
+
 (defmacro ?- (&rest goals)
-  `(top-level-prove ',goals))
+  `(top-level-prove ',(replace-?-vars goals)))
 
 (defun top-level-prove (goals)
-  (show-prolog-solutions
-   (variables-in goals)
-   (prove-all goals no-bindings)))
+  (prove-all `(,@goals (show-prolog-vars ,@(variables-in goals)))
+             no-bindings)
+  (format t "~&No.")
+  (values))
 
 (defun show-prolog-solutions (vars solutions)
   (if (null solutions)
@@ -88,10 +96,25 @@
             solutions))
   (values))
 
-(defun show-prolog-vars (vars bindings)
+;;; primitive show-prolog-vars
+(defun show-prolog-vars (vars bindings other-goals)
   (if (null vars)
       (format t "~&Yes.")
       (dolist (var vars)
         (format t "~&~a = ~a" var
                 (subst-bindings bindings var))))
-  (princ ";"))
+  (if (continue-p)
+      fail
+      (prove-all other-goals bindings)))
+
+;;; register primitives
+(setf (get 'show-prolog-vars 'clauses) 'show-prolog-vars)
+
+(defun continue-p ()
+  (case (read-char)
+    (#\; t)
+    (#\. nil)
+    (#\newline (continue-p))
+    (otherwise
+     (format t " Type ; to see more or . to stop")
+     (continue-p))))
