@@ -7,6 +7,7 @@
   :serial t
   :components ((:file "package")
                (:file "unify")
-               (:file "prolog")))
+               (:file "prolog")
+               (:file "fey")))
 
 ;;; (asdf:load-system :fey)
